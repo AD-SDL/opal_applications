@@ -1,392 +1,398 @@
 """
 Opentrons OT-2/Flex Protocol for Automated Media Preparation
-This is a first draft translating the Biomek protocol to Opentrons API using Claude.
-It has not been tested and will need fixes. 
 
-This protocol generates files for media optimization and creates an Opentrons protocol
-to automate liquid transfers using the OT-2 or Flex robot.
+This protocol reads CSV files and performs automated liquid transfers for media optimization.
+Upload this file directly to the Opentrons App along with required CSV files.
 
-Inputs:
-- standard_recipe_concentrations.csv
+Required CSV files (upload as runtime parameters or place in protocol directory):
 - stock_concentrations.csv
+- standard_recipe_concentrations.csv
 - target_concentrations.csv
-- 24-well stock plate layout files
-
-Outputs:
-- dest_volumes.csv
-- media_descriptions.csv
-- opentrons_protocol.py (executable protocol file)
+- 24-well_stock_plate_high.csv
+- 24-well_stock_plate_low.csv
+- 24-well_stock_plate_fresh.csv
 """
 
-import os
-import sys
-sys.path.append('../')
-
+from opentrons import protocol_api
 import pandas as pd
 import numpy as np
-from textwrap import dedent
 
-from core import find_volumes, find_volumes_bulk
-
-# ============================================================================
-# USER PARAMETERS
-# ============================================================================
-
-CYCLE = 6
-
-user_params = {
-    'stock_conc_file': '../data/flaviolin/stock_concentrations.csv',
-    'standard_media_file': '../data/flaviolin/standard_recipe_concentrations.csv',
-    'stock_plate_high_file': '../data/flaviolin/24-well_stock_plate_high.csv',
-    'stock_plate_low_file': '../data/flaviolin/24-well_stock_plate_low.csv',
-    'stock_plate_fresh_file': '../data/flaviolin/24-well_stock_plate_fresh.csv',
-    'target_conc_file': f'../data/flaviolin/DBTL{CYCLE}/target_concentrations.csv',
-    'output_path': f'../data/flaviolin/DBTL{CYCLE}',
-    'well_volume': 1500,            # Total volume in destination well (µL)
-    'min_transfer_volume': 1.0,     # Minimum transfer volume for Opentrons (µL)
-    'culture_factor': 100,          # Dilution factor for culture
-    'pipette_left': 'p300_single_gen2',   # Left mount pipette
-    'pipette_right': 'p20_single_gen2',   # Right mount pipette
-}
-
-# Opentrons pipette specifications
-pipette_specs = {
-    'p20_single_gen2': {'min': 1, 'max': 20},
-    'p300_single_gen2': {'min': 20, 'max': 300},
-    'p1000_single_gen2': {'min': 100, 'max': 1000},
-    'flex_1channel_50': {'min': 1, 'max': 50},
-    'flex_1channel_1000': {'min': 5, 'max': 1000},
-}
-
-# ============================================================================
-# LOAD DATA
-# ============================================================================
-
-print("Loading data files...")
-
-# Load standard media recipe
-df_stand = pd.read_csv(user_params['standard_media_file']).set_index("Component")
-
-# Load stock concentrations and stock plate layouts
-df_stock = pd.read_csv(user_params['stock_conc_file']).set_index("Component")
-df_stock_plate_high = pd.read_csv(user_params['stock_plate_high_file'])
-df_stock_plate_low = pd.read_csv(user_params['stock_plate_low_file'])
-df_stock_plate_fresh = pd.read_csv(user_params['stock_plate_fresh_file'])
-
-# Reformat values
-df_stock.loc['Kan'] = [300., 300., 1.]
-df_stock["High Concentration[mM]"] = df_stock["High Concentration[mM]"].astype(float)
-df_stock["Low Concentration[mM]"] = df_stock["Low Concentration[mM]"].astype(float)
-
-# ============================================================================
-# READ TARGET CONCENTRATIONS
-# ============================================================================
-
-df_target_conc = pd.read_csv(user_params['target_conc_file'], index_col=0)
-
-# Add fixed components from standard recipe
-comp_fixed = list(df_stand.drop(df_target_conc.columns).index)
-print('Fixed components:')
-for comp in comp_fixed:
-    df_target_conc[comp] = df_stand.at[comp, 'Concentration[mM]']
-    print(f'  {comp}')
-
-# Reorder columns to match stock dataframe
-columns = df_stock.index
-df_target_conc = df_target_conc[columns]
-
-# Save media descriptions
-final_conc_file = f"{user_params['output_path']}/media_descriptions.csv"
-df_target_conc.drop(columns='Kan').to_csv(final_conc_file)
-
-# ============================================================================
-# CALCULATE TRANSFER VOLUMES
-# ============================================================================
-
-print("\nCalculating transfer volumes...")
-
-df_volumes, df_conc_level = find_volumes_bulk(
-    df_stock=df_stock, 
-    df_target_conc=df_target_conc,
-    well_volume=user_params['well_volume'],
-    min_tip_volume=user_params['min_transfer_volume'],
-    culture_ratio=user_params['culture_factor']
-)
-
-# Add culture volumes
-df_volumes['Culture'] = user_params['well_volume'] / user_params['culture_factor']
-
-# Verify total volumes
-EPS = 0.000001
-assert (np.sum(df_volumes.values, axis=1) - user_params['well_volume'] <= EPS).all(), \
-    'Sum of all volumes is not equal to total well volume!'
-
-# Save volumes
-volumes_file = f"{user_params['output_path']}/dest_volumes.csv"
-df_volumes.to_csv(volumes_file)
-
-print(f"Saved destination volumes to {volumes_file}")
-
-# ============================================================================
-# PREPARE SOURCE PLATE LAYOUTS
-# ============================================================================
-
-well_volume = 9000  # including dead volume
-dead_volume = 100
-
-# Process high concentration plate
-df_stock_plate_high['Volume [uL]'] = None
-for i in range(len(df_stock_plate_high)-2):
-    comp = df_stock_plate_high.iloc[i]['Component']
-    stock_level = 'high'
-    tot_vol_comp = np.sum(
-        df_volumes[df_conc_level[comp]==stock_level][comp].values
-    )
-    df_stock_plate_high.loc[i, 'Volume [uL]'] = np.round(tot_vol_comp) + dead_volume
-
-# Assign well names
-well_rows = 'ABCD'
-well_columns = '123456'
-num_source_wells = len(df_stock_plate_high) 
-well_names = [f'{row}{column}' for column in well_columns for row in well_rows]
-well_names = well_names[:num_source_wells]
-df_stock_plate_high['Well'] = well_names
-df_stock_plate_high = df_stock_plate_high.set_index("Well")
-
-# Process low concentration plate
-df_stock_plate_low['Volume [uL]'] = None
-for i in range(len(df_stock_plate_low)):
-    comp = df_stock_plate_low.iloc[i]['Component']
-    stock_level = 'low'
-    tot_vol_comp = np.sum(
-        df_volumes[df_conc_level[comp]==stock_level][comp].values
-    )
-    df_stock_plate_low.iloc[i, df_stock_plate_low.columns.get_loc('Volume [uL]')] = \
-        np.round(tot_vol_comp) + dead_volume
-
-df_stock_plate_low = df_stock_plate_low.set_index("Well")
-
-# Process fresh components plate
-df_stock_plate_fresh['Volume [uL]'] = None
-comp = 'FeSO4'
-for i, stock_level in enumerate(list(['low', 'high'])):
-    tot_vol_comp = np.sum(
-        df_volumes[df_conc_level[comp]==stock_level][comp].values
-    )
-    df_stock_plate_fresh.loc[i+1, 'Volume [uL]'] = np.round(tot_vol_comp) + dead_volume
-
-# Culture
-tot_vol_culture = np.sum(df_volumes['Culture'].values)
-df_stock_plate_fresh.loc[0, 'Volume [uL]'] = np.round(tot_vol_culture) + dead_volume
-df_stock_plate_fresh = df_stock_plate_fresh.set_index("Well")
-
-# Save stock plate instructions
-stock_plate_file = f"{user_params['output_path']}/24-well_stock_plate_high.csv"
-df_stock_plate_high.to_csv(stock_plate_file)
-stock_plate_file = f"{user_params['output_path']}/24-well_stock_plate_low.csv"
-df_stock_plate_low.to_csv(stock_plate_file)
-stock_plate_file = f"{user_params['output_path']}/24-well_stock_plate_fresh.csv"
-df_stock_plate_fresh.to_csv(stock_plate_file)
-
-# ============================================================================
-# GENERATE OPENTRONS PROTOCOL
-# ============================================================================
-
-print("\nGenerating Opentrons protocol...")
-
-# Create transfer lists for protocol generation
-transfers = {
-    'water': [],
-    'kan': [],
-    'components': [],
-    'culture': []
-}
-
-# Water transfers
-for dest_well in df_volumes.index:
-    vol = df_volumes.at[dest_well, 'Water']
-    if vol > 0:
-        transfers['water'].append({
-            'source': 'A1',  # Reservoir
-            'dest': dest_well,
-            'volume': vol
-        })
-
-# Kan transfers
-for dest_well in df_volumes.index:
-    vol = df_volumes.at[dest_well, 'Kan']
-    if vol > 0:
-        source_well = df_stock_plate_high[
-            df_stock_plate_high["Component"]=='Kan'
-        ].index[0]
-        transfers['kan'].append({
-            'source': source_well,
-            'source_plate': 'stock_high',
-            'dest': dest_well,
-            'volume': vol
-        })
-
-# Component transfers
-components = list(df_volumes.columns.drop(['Kan', 'Water', 'Culture']))
-for comp in components:
-    for dest_well in df_volumes.index:
-        vol = df_volumes.at[dest_well, comp]
-        if vol > 0:
-            conc_level = df_conc_level.at[dest_well, comp]
-            
-            if comp == 'FeSO4':
-                source_plate = 'stock_fresh'
-                source_well = "B1" if conc_level == 'low' else "C1"
-            else:
-                source_plate = 'stock_high' if conc_level == 'high' else 'stock_low'
-                df_stock_plate = df_stock_plate_high if conc_level == 'high' else df_stock_plate_low
-                source_wells = df_stock_plate[df_stock_plate["Component"]==comp].index
-                source_well = source_wells[0]
-            
-            transfers['components'].append({
-                'component': comp,
-                'source': source_well,
-                'source_plate': source_plate,
-                'dest': dest_well,
-                'volume': vol
-            })
-
-# Culture transfers
-vol = df_volumes['Culture'][0]
-for dest_well in df_volumes.index:
-    source_well = df_stock_plate_fresh[
-        df_stock_plate_fresh["Component"]=='Culture'
-    ].index[0]
-    transfers['culture'].append({
-        'source': source_well,
-        'source_plate': 'stock_fresh',
-        'dest': dest_well,
-        'volume': vol
-    })
-
-# Generate protocol file
-protocol_content = f'''from opentrons import protocol_api
-
-metadata = {{
-    'protocolName': 'Automated Media Preparation - DBTL Cycle {CYCLE}',
-    'author': 'Generated from Biomek conversion script',
-    'description': 'Media optimization protocol with multiple component transfers',
+metadata = {
+    'protocolName': 'Automated Media Preparation',
+    'author': 'Converted from Biomek',
+    'description': 'Media optimization with multiple component transfers from CSV inputs',
     'apiLevel': '2.13'
-}}
+}
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+CONFIG = {
+    'well_volume': 1500,            # Total volume in destination well (µL)
+    'min_transfer_volume': 1.0,     # Minimum transfer volume (µL)
+    'culture_factor': 100,          # Dilution factor for culture
+    'dead_volume': 100,             # Dead volume in source wells (µL)
+}
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def find_volumes_single(stock_high, stock_low, target_conc, well_volume, min_volume, culture_ratio):
+    """
+    Calculate transfer volumes for a single component.
+    
+    Returns:
+        volume: Transfer volume in µL
+        level: 'high' or 'low' stock concentration to use
+    """
+    if target_conc == 0:
+        return 0, None
+    
+    # Try high concentration first
+    if stock_high > 0:
+        vol_high = (target_conc * well_volume) / stock_high
+        if vol_high >= min_volume and vol_high <= well_volume / culture_ratio:
+            return vol_high, 'high'
+    
+    # Try low concentration
+    if stock_low > 0:
+        vol_low = (target_conc * well_volume) / stock_low
+        if vol_low >= min_volume and vol_low <= well_volume / culture_ratio:
+            return vol_low, 'low'
+    
+    # If neither works, use the closer one
+    if stock_high > 0:
+        return (target_conc * well_volume) / stock_high, 'high'
+    elif stock_low > 0:
+        return (target_conc * well_volume) / stock_low, 'low'
+    
+    return 0, None
+
+def calculate_transfer_volumes(df_stock, df_target_conc, well_volume, min_volume, culture_ratio):
+    """Calculate all transfer volumes and concentration levels."""
+    
+    df_volumes = pd.DataFrame(index=df_target_conc.index, columns=df_stock.index)
+    df_conc_level = pd.DataFrame(index=df_target_conc.index, columns=df_stock.index)
+    
+    for well in df_target_conc.index:
+        for comp in df_stock.index:
+            if comp == 'Kan':
+                # Kanamycin uses fixed concentration
+                df_volumes.at[well, comp] = (df_target_conc.at[well, comp] * well_volume) / df_stock.at[comp, 'High Concentration']
+                df_conc_level.at[well, comp] = 'high'
+            else:
+                target = df_target_conc.at[well, comp]
+                stock_high = df_stock.at[comp, 'High Concentration']
+                stock_low = df_stock.at[comp, 'Low Concentration']
+                
+                vol, level = find_volumes_single(stock_high, stock_low, target, well_volume, min_volume, culture_ratio)
+                df_volumes.at[well, comp] = vol
+                df_conc_level.at[well, comp] = level
+    
+    # Convert to float
+    df_volumes = df_volumes.astype(float)
+    
+    # Calculate water to fill to final volume
+    total_other = df_volumes.sum(axis=1)
+    culture_vol = well_volume / culture_ratio
+    df_volumes['Water'] = well_volume - total_other - culture_vol
+    df_volumes['Culture'] = culture_vol
+    
+    return df_volumes, df_conc_level
+
+def load_csv_inputs(protocol):
+    """Load all required CSV files."""
+    
+    protocol.comment("Loading CSV data files...")
+    
+    # In a real Opentrons run, these would be loaded from the protocol directory
+    # For simulation/testing, you'll need to ensure these files are accessible
+    
+    try:
+        df_stock = pd.read_csv('../csv_inputs/stock_concentrations.csv').set_index("Component")
+        df_standard = pd.read_csv('../csv_inputs/standard_recipe_concentrations.csv').set_index("Component")
+        df_target = pd.read_csv('../csv_inputs/target_concentrations.csv', index_col=0)
+        df_stock_high = pd.read_csv('../csv_inputs/24-well_stock_plate_high.csv').set_index("Well")
+        df_stock_low = pd.read_csv('../csv_inputs/24-well_stock_plate_low.csv').set_index("Well")
+        df_stock_fresh = pd.read_csv('../csv_inputs/24-well_stock_plate_fresh.csv').set_index("Well")
+        
+        # Format stock concentrations
+        if 'Kan' in df_stock.index:
+            df_stock.loc['Kan'] = [300., 300., 1.]
+        df_stock["High Concentration"] = df_stock["High Concentration"].astype(float)
+        df_stock["Low Concentration"] = df_stock["Low Concentration"].astype(float)
+        
+        # Add fixed components from standard recipe to target concentrations
+        for column in df_target.columns:
+                df_standard.drop(column, axis=0, inplace=True)
+
+        comp_fixed = list(df_standard.index)
+        for comp in comp_fixed:
+            df_target[comp] = df_standard.at[comp, 'Concentration[mM]']
+        
+        # Reorder columns to match stock
+        df_target = df_target[df_stock.index]
+        
+        return df_stock, df_target, df_stock_high, df_stock_low, df_stock_fresh
+        
+    except Exception as e:
+        protocol.comment(f"ERROR loading CSV files: {str(e)}")
+        protocol.comment("Please ensure all CSV files are in the protocol directory")
+        raise
+
+# ============================================================================
+# MAIN PROTOCOL
+# ============================================================================
 
 def run(protocol: protocol_api.ProtocolContext):
     
-    # ============================================================================
-    # LABWARE
-    # ============================================================================
+    protocol.comment("="*50)
+    protocol.comment("Automated Media Preparation Protocol")
+    protocol.comment("="*50)
+    
+    # ------------------------------------------------------------------------
+    # Load data
+    # ------------------------------------------------------------------------
+    
+    df_stock, df_target_conc, df_stock_high, df_stock_low, df_stock_fresh = load_csv_inputs(protocol)
+    
+    protocol.comment(f"Loaded data for {len(df_target_conc)} destination wells")
+    protocol.comment(f"Components: {len(df_stock)} total")
+    
+    # ------------------------------------------------------------------------
+    # Calculate volumes
+    # ------------------------------------------------------------------------
+    
+    protocol.comment("Calculating transfer volumes...")
+    
+    df_volumes, df_conc_level = calculate_transfer_volumes(
+        df_stock=df_stock,
+        df_target_conc=df_target_conc,
+        well_volume=CONFIG['well_volume'],
+        min_volume=CONFIG['min_transfer_volume'],
+        culture_ratio=CONFIG['culture_factor']
+    )
+    
+    # Validate volumes
+    total_vols = df_volumes.sum(axis=1)
+    if not all(abs(total_vols - CONFIG['well_volume']) < 0.01):
+        protocol.comment("WARNING: Volume calculations don't sum to target!")
+    
+    # ------------------------------------------------------------------------
+    # Setup labware
+    # ------------------------------------------------------------------------
+    
+    protocol.comment("Setting up labware...")
     
     # Tips
-    tiprack_20 = protocol.load_labware('opentrons_96_tiprack_20ul', 1)
-    tiprack_300_1 = protocol.load_labware('opentrons_96_tiprack_300ul', 2)
-    tiprack_300_2 = protocol.load_labware('opentrons_96_tiprack_300ul', 3)
+    tiprack_20_1 = protocol.load_labware('opentrons_96_tiprack_20ul', 1)
+    tiprack_20_2 = protocol.load_labware('opentrons_96_tiprack_20ul', 2)
+    tiprack_300_1 = protocol.load_labware('opentrons_96_tiprack_300ul', 3)
+    tiprack_300_2 = protocol.load_labware('opentrons_96_tiprack_300ul', 4)
     
     # Plates
-    dest_plate = protocol.load_labware('nest_24_wellplate_1500ul', 4, 'Destination Plate')
-    stock_high = protocol.load_labware('nest_24_wellplate_1500ul', 5, 'Stock High Conc')
-    stock_low = protocol.load_labware('nest_24_wellplate_1500ul', 6, 'Stock Low Conc')
-    stock_fresh = protocol.load_labware('nest_24_wellplate_1500ul', 7, 'Stock Fresh')
-    reservoir = protocol.load_labware('nest_12_reservoir_15ml', 8, 'Water Reservoir')
+    dest_plate = protocol.load_labware('nest_24_wellplate_10.4ml', 5, 'Destination Plate')
+    stock_high = protocol.load_labware('nest_24_wellplate_10.4ml', 6, 'Stock High Conc')
+    stock_low = protocol.load_labware('nest_24_wellplate_10.4ml', 7, 'Stock Low Conc')
+    stock_fresh = protocol.load_labware('nest_24_wellplate_10.4ml', 8, 'Stock Fresh')
+    reservoir = protocol.load_labware('nest_12_reservoir_15ml', 9, 'Water Reservoir')
     
     # Pipettes
-    p20 = protocol.load_instrument('{user_params['pipette_right']}', 'right', tip_racks=[tiprack_20])
-    p300 = protocol.load_instrument('{user_params['pipette_left']}', 'left', tip_racks=[tiprack_300_1, tiprack_300_2])
+    p20 = protocol.load_instrument('p20_single_gen2', 'right', 
+                                    tip_racks=[tiprack_20_1, tiprack_20_2])
+    p300 = protocol.load_instrument('p300_single_gen2', 'left', 
+                                     tip_racks=[tiprack_300_1, tiprack_300_2])
     
-    # ============================================================================
-    # PROTOCOL
-    # ============================================================================
+    # Set flow rates for accuracy
+    p20.flow_rate.aspirate = 7.56
+    p20.flow_rate.dispense = 7.56
+    p300.flow_rate.aspirate = 92.86
+    p300.flow_rate.dispense = 92.86
     
-    protocol.comment("Starting media preparation protocol")
+    # Map plate names to labware
+    plate_map = {
+        'stock_high': stock_high,
+        'stock_low': stock_low,
+        'stock_fresh': stock_fresh
+    }
     
-    # Water transfers
-    protocol.comment("\\n=== Transferring Water ===")
+    # ------------------------------------------------------------------------
+    # Helper function for transfers
+    # ------------------------------------------------------------------------
+    
+    def smart_transfer(volume, source, dest, pip_choice='auto', mix_after=None):
+        """Perform a transfer with automatic pipette selection."""
+        if volume < 1.0:
+            return  # Skip transfers below minimum
+        
+        if pip_choice == 'auto':
+            pipette = p20 if volume < 20 else p300
+        elif pip_choice == 'p20':
+            pipette = p20
+        else:
+            pipette = p300
+        
+        # Check if volume is within pipette range
+        if volume > pipette.max_volume:
+            # Split into multiple transfers
+            num_transfers = int(np.ceil(volume / pipette.max_volume))
+            vol_per_transfer = volume / num_transfers
+            for _ in range(num_transfers):
+                pipette.transfer(vol_per_transfer, source, dest, new_tip='always')
+        else:
+            if mix_after:
+                pipette.transfer(volume, source, dest, new_tip='always', 
+                               mix_after=mix_after)
+            else:
+                pipette.transfer(volume, source, dest, new_tip='always')
+    
+    # ------------------------------------------------------------------------
+    # Calculate and report resource requirements
+    # ------------------------------------------------------------------------
+    
+    total_water = df_volumes['Water'].sum()
+    total_culture = df_volumes['Culture'].sum()
+    
+    protocol.comment(f"\nResource requirements:")
+    protocol.comment(f"  Water: {total_water:.0f} µL")
+    protocol.comment(f"  Culture: {total_culture:.0f} µL")
+    
+    # Count transfers by pipette
+    water_20 = len([v for v in df_volumes['Water'] if 0 < v < 20])
+    water_300 = len([v for v in df_volumes['Water'] if v >= 20])
+    protocol.comment(f"  Water transfers: {water_20} (p20) + {water_300} (p300)")
+    
+    # ------------------------------------------------------------------------
+    # WATER TRANSFERS
+    # ------------------------------------------------------------------------
+    
+    protocol.comment("\n" + "="*50)
+    protocol.comment("STEP 1: Transferring Water")
+    protocol.comment("="*50)
+    
     water_source = reservoir['A1']
-'''
-
-# Add water transfers
-for t in transfers['water']:
-    vol = t['volume']
-    pipette = 'p20' if vol < 20 else 'p300'
-    protocol_content += f"    {pipette}.transfer({vol:.1f}, water_source, dest_plate['{t['dest']}'], new_tip='always')\n"
-
-# Add Kan transfers
-protocol_content += "\n    # Kanamycin transfers\n"
-protocol_content += "    protocol.comment(\"\\n=== Transferring Kanamycin ===\")\n"
-for t in transfers['kan']:
-    vol = t['volume']
-    pipette = 'p20' if vol < 20 else 'p300'
-    protocol_content += f"    {pipette}.transfer({vol:.1f}, stock_high['{t['source']}'], dest_plate['{t['dest']}'], new_tip='always')\n"
-
-# Add component transfers
-protocol_content += "\n    # Component transfers\n"
-protocol_content += "    protocol.comment(\"\\n=== Transferring Components ===\")\n"
-for t in transfers['components']:
-    vol = t['volume']
-    pipette = 'p20' if vol < 20 else 'p300'
-    source_plate_var = t['source_plate'].replace('stock_', 'stock_')
-    protocol_content += f"    {pipette}.transfer({vol:.1f}, {source_plate_var}['{t['source']}'], dest_plate['{t['dest']}'], new_tip='always')\n"
-
-# Add culture transfers
-protocol_content += "\n    # Culture transfers\n"
-protocol_content += "    protocol.comment(\"\\n=== Transferring Culture ===\")\n"
-protocol_content += "    protocol.pause('Replace stock plates with fresh culture plate if needed')\n"
-for t in transfers['culture']:
-    protocol_content += f"    p20.transfer({t['volume']:.1f}, stock_fresh['{t['source']}'], dest_plate['{t['dest']}'], mix_after=(3, 10), new_tip='always')\n"
-
-protocol_content += "\n    protocol.comment(\"\\n=== Protocol Complete ===\")\n"
-
-# Save protocol file
-protocol_file = f"{user_params['output_path']}/opentrons_protocol.py"
-with open(protocol_file, 'w') as f:
-    f.write(protocol_content)
-
-print(f"Saved Opentrons protocol to {protocol_file}")
-
-# ============================================================================
-# CALCULATE RESOURCE REQUIREMENTS
-# ============================================================================
-
-print("\n" + "="*70)
-print("RESOURCE REQUIREMENTS")
-print("="*70)
-
-num_water_20 = len([t for t in transfers['water'] if t['volume'] < 20])
-num_water_300 = len([t for t in transfers['water'] if t['volume'] >= 20])
-num_kan_20 = len([t for t in transfers['kan'] if t['volume'] < 20])
-num_kan_300 = len([t for t in transfers['kan'] if t['volume'] >= 20])
-num_comp_20 = len([t for t in transfers['components'] if t['volume'] < 20])
-num_comp_300 = len([t for t in transfers['components'] if t['volume'] >= 20])
-num_culture = len(transfers['culture'])
-
-total_20 = num_water_20 + num_kan_20 + num_comp_20 + num_culture
-total_300 = num_water_300 + num_kan_300 + num_comp_300
-
-print(f"\nTransfer counts:")
-print(f"  Water (p20): {num_water_20}")
-print(f"  Water (p300): {num_water_300}")
-print(f"  Kanamycin (p20): {num_kan_20}")
-print(f"  Kanamycin (p300): {num_kan_300}")
-print(f"  Components (p20): {num_comp_20}")
-print(f"  Components (p300): {num_comp_300}")
-print(f"  Culture (p20): {num_culture}")
-print(f"\nTotal transfers: {total_20 + total_300}")
-
-print(f"\nTip requirements:")
-print(f"  20µL tips: {total_20} tips ({np.ceil(total_20/96):.0f} box(es))")
-print(f"  300µL tips: {total_300} tips ({np.ceil(total_300/96):.0f} box(es))")
-
-print(f"\nTotal water needed: {np.sum(df_volumes['Water'].values):.0f} µL")
-print(f"Total culture needed: {tot_vol_culture:.0f} µL")
-
-print("\n" + "="*70)
-print("Protocol generation complete!")
-print("="*70)
-print(f"\nNext steps:")
-print(f"1. Review the protocol file: {protocol_file}")
-print(f"2. Load the protocol in the Opentrons App")
-print(f"3. Prepare labware according to the stock plate CSV files")
-print(f"4. Run the protocol")
+    transfer_count = 0
+    
+    for well_id in df_volumes.index:
+        volume = df_volumes.at[well_id, 'Water']
+        if volume > 0:
+            smart_transfer(volume, water_source, dest_plate[well_id])
+            transfer_count += 1
+            if transfer_count % 10 == 0:
+                protocol.comment(f"  Completed {transfer_count} water transfers")
+    
+    protocol.comment(f"Water transfers complete: {transfer_count} total")
+    
+    # ------------------------------------------------------------------------
+    # KANAMYCIN TRANSFERS
+    # ------------------------------------------------------------------------
+    
+    protocol.comment("\n" + "="*50)
+    protocol.comment("STEP 2: Transferring Kanamycin")
+    protocol.comment("="*50)
+    
+    # Find kan source well
+    kan_wells = df_stock_high[df_stock_high["Component"] == 'Kan'].index
+    if len(kan_wells) > 0:
+        kan_source = stock_high[kan_wells[0]]
+        transfer_count = 0
+        
+        for well_id in df_volumes.index:
+            volume = df_volumes.at[well_id, 'Kan']
+            if volume > 0:
+                smart_transfer(volume, kan_source, dest_plate[well_id])
+                transfer_count += 1
+        
+        protocol.comment(f"Kanamycin transfers complete: {transfer_count} total")
+    else:
+        protocol.comment("No Kanamycin source found, skipping")
+    
+    # ------------------------------------------------------------------------
+    # COMPONENT TRANSFERS
+    # ------------------------------------------------------------------------
+    
+    protocol.comment("\n" + "="*50)
+    protocol.comment("STEP 3: Transferring Components")
+    protocol.comment("="*50)
+    
+    components = [c for c in df_volumes.columns if c not in ['Water', 'Kan', 'Culture']]
+    transfer_count = 0
+    
+    for comp in components:
+        comp_transfers = 0
+        
+        for well_id in df_volumes.index:
+            volume = df_volumes.at[well_id, comp]
+            if volume > 0:
+                conc_level = df_conc_level.at[well_id, comp]
+                
+                # Determine source
+                if comp == 'FeSO4':
+                    source_plate = plate_map['stock_fresh']
+                    source_well = "B1" if conc_level == 'low' else "C1"
+                else:
+                    if conc_level == 'high':
+                        source_plate = plate_map['stock_high']
+                        df_source = df_stock_high
+                    else:
+                        source_plate = plate_map['stock_low']
+                        df_source = df_stock_low
+                    
+                    # Find source well
+                    source_wells = df_source[df_source["Component"] == comp].index
+                    if len(source_wells) > 0:
+                        source_well = source_wells[0]
+                    else:
+                        protocol.comment(f"WARNING: No source found for {comp}")
+                        continue
+                
+                smart_transfer(volume, source_plate[source_well], dest_plate[well_id])
+                comp_transfers += 1
+                transfer_count += 1
+        
+        if comp_transfers > 0:
+            protocol.comment(f"  {comp}: {comp_transfers} transfers")
+    
+    protocol.comment(f"Component transfers complete: {transfer_count} total")
+    
+    # ------------------------------------------------------------------------
+    # CULTURE TRANSFERS
+    # ------------------------------------------------------------------------
+    
+    protocol.comment("\n" + "="*50)
+    protocol.comment("STEP 4: Transferring Culture")
+    protocol.comment("="*50)
+    protocol.comment("PAUSE: Prepare fresh culture plate if needed")
+    
+    protocol.pause("Replace plates with fresh culture if needed, then resume")
+    
+    # Find culture source well
+    culture_wells = df_stock_fresh[df_stock_fresh["Component"] == 'Culture'].index
+    if len(culture_wells) > 0:
+        culture_source = stock_fresh[culture_wells[0]]
+        culture_volume = df_volumes['Culture'].iloc[0]
+        transfer_count = 0
+        
+        for well_id in df_volumes.index:
+            # Transfer with mixing
+            smart_transfer(culture_volume, culture_source, dest_plate[well_id],
+                         mix_after=(3, 10))
+            transfer_count += 1
+            if transfer_count % 10 == 0:
+                protocol.comment(f"  Completed {transfer_count} culture transfers")
+        
+        protocol.comment(f"Culture transfers complete: {transfer_count} total")
+    else:
+        protocol.comment("ERROR: No culture source found!")
+    
+    # ------------------------------------------------------------------------
+    # COMPLETION
+    # ------------------------------------------------------------------------
+    
+    protocol.comment("\n" + "="*50)
+    protocol.comment("PROTOCOL COMPLETE")
+    protocol.comment("="*50)
+    protocol.comment(f"Total wells prepared: {len(df_volumes)}")
+    protocol.comment("Remove destination plate and proceed with incubation")
