@@ -29,10 +29,10 @@ metadata = {
 # ============================================================================
 
 CONFIG = {
-    'well_volume': 1500,            # Total volume in destination well (µL)
+    'well_volume': 1.5,            # Total volume in destination well (µL)
     'min_transfer_volume': 1.0,     # Minimum transfer volume (µL)
     'culture_factor': 100,          # Dilution factor for culture
-    'dead_volume': 100,             # Dead volume in source wells (µL)
+    'dead_volume': .1,             # Dead volume in source wells (µL)
 }
 
 # ============================================================================
@@ -187,10 +187,10 @@ def run(protocol: protocol_api.ProtocolContext):
     protocol.comment("Setting up labware...")
     
     # Tips
-    tiprack_20_1 = protocol.load_labware('opentrons_96_tiprack_20ul', 1)
-    tiprack_20_2 = protocol.load_labware('opentrons_96_tiprack_20ul', 2)
-    tiprack_300_1 = protocol.load_labware('opentrons_96_tiprack_300ul', 3)
-    tiprack_300_2 = protocol.load_labware('opentrons_96_tiprack_300ul', 4)
+    tiprack_300_1 = protocol.load_labware('opentrons_96_tiprack_300ul', 1)
+    tiprack_300_2 = protocol.load_labware('opentrons_96_tiprack_300ul', 2)
+    tiprack_20_1 = protocol.load_labware('opentrons_96_tiprack_20ul', 3)
+    tiprack_20_2 = protocol.load_labware('opentrons_96_tiprack_20ul', 4)
     
     # Plates
     dest_plate = protocol.load_labware('nest_24_wellplate_10.4ml', 5, 'Destination Plate')
@@ -200,8 +200,8 @@ def run(protocol: protocol_api.ProtocolContext):
     reservoir = protocol.load_labware('nest_12_reservoir_15ml', 9, 'Water Reservoir')
     
     # Pipettes
-    p20 = protocol.load_instrument('p20_single_gen2', 'right', 
-                                    tip_racks=[tiprack_20_1, tiprack_20_2])
+    p20 = protocol.load_instrument('p20_single_gen2', 'right',
+                                   tip_racks=[tiprack_20_1, tiprack_20_2])
     p300 = protocol.load_instrument('p300_single_gen2', 'left', 
                                      tip_racks=[tiprack_300_1, tiprack_300_2])
     
@@ -238,6 +238,9 @@ def run(protocol: protocol_api.ProtocolContext):
         if volume > pipette.max_volume:
             # Split into multiple transfers
             num_transfers = int(np.ceil(volume / pipette.max_volume))
+            protocol.comment(num_transfers)
+            print(volume)
+            print(pipette)
             vol_per_transfer = volume / num_transfers
             for _ in range(num_transfers):
                 pipette.transfer(vol_per_transfer, source, dest, new_tip='always')
