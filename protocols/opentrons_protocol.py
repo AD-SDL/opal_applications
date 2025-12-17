@@ -12,7 +12,7 @@ metadata = {
 }
 
 # requirements
-requirements = {"robotType": "OT-2", "apiLevel": "2.20"}
+requirements = {"robotType": "Flex", "apiLevel": "2.20"}
 
 def add_parameters(parameters):
 # the variable name must match the protocol.params.attribute (below)
@@ -47,16 +47,24 @@ def run(protocol: protocol_api.ProtocolContext):
     print("test")
     # load tip rack in deck slot A2
     tiprack = protocol.load_labware(
-        load_name="opentrons_96_tiprack_1000ul", location="6"
+        load_name="opentrons_96_tiprack_20ul", location="6"
+    )
+
+    tiprack2 = protocol.load_labware(
+        load_name="opentrons_96_tiprack_300ul", location="7"
     )
     
     # attach pipette to left mount
     pipette = protocol.load_instrument(
-        instrument_name="p1000_single_gen2", #
-        mount="right",
+        instrument_name="flex_1channel_50",
+        mount="left",
         tip_racks=[tiprack]
     )
-    
+    pipette = protocol.load_instrument(
+        instrument_name="flex_1channel_1000",
+        mount="right",
+        tip_racks=[tiprack2]
+    )
     # # load trash bin
     # trash = protocol.load_trash_bin("Trash") # OT-2
 
