@@ -33,37 +33,46 @@ def run(protocol: protocol_api.ProtocolContext):
     # well_data = protocol.params.cherrypicking_wells.parse_as_csv()
     well_data = []
     # well_data = protocol.params.cherrypicking_wells.parse_as_csv()
-    with open("../csv_outputs/P20_components.csv", mode='r', newline='', encoding='utf-8') as csvfile:
+    with open("../csv_outputs/OTFlex_test.csv", mode='r', newline='', encoding='utf-8') as csvfile:
         # Use csv.reader to parse the file
         csv_reader = csv.reader(csvfile)
         for row in csv_reader:
             well_data.append(row)
      
-    source_slots = [row[0][1] for row in well_data][1::] # skip first row (header) and start at index 1
+    source_slots = [row[0] for row in well_data][1::] # skip first row (header) and start at index 1
     unique_source_slots = list(set(source_slots)) # unique set ['1'] -> ['1', '2']
     print(unique_source_slots)
-    destination_slots = [row[2][1] for row in well_data][1::]
+    destination_slots = [row[2] for row in well_data][1::]
     unique_destination_slots = list(set(destination_slots))
     print("test")
     # load tip rack in deck slot A2
-    tiprack = protocol.load_labware(
-        load_name="opentrons_96_tiprack_20ul", location="6"
+    tiprackB2 = protocol.load_labware(
+        load_name="opentrons_96_tiprack_20ul", location="B2"
+    )
+    tiprackB3 = protocol.load_labware(
+        load_name="opentrons_96_tiprack_20ul", location="B3"
     )
 
-    tiprack2 = protocol.load_labware(
-        load_name="opentrons_96_tiprack_300ul", location="7"
+    tiprackC1 = protocol.load_labware(
+        load_name="opentrons_96_tiprack_300ul", location="C1"
+    )
+    tiprackC2 = protocol.load_labware(
+        load_name="opentrons_96_tiprack_300ul", location="C2"
+    )
+    tiprackC3 = protocol.load_labware(
+        load_name="opentrons_96_tiprack_300ul", location="C3"
     )
     
     # attach pipette to left mount
     pipette = protocol.load_instrument(
         instrument_name="flex_1channel_50",
         mount="left",
-        tip_racks=[tiprack]
+        tip_racks=[tiprackB2, tiprackB3]
     )
     pipette = protocol.load_instrument(
         instrument_name="flex_1channel_1000",
         mount="right",
-        tip_racks=[tiprack2]
+        tip_racks=[tiprackC1, tiprackC2, tiprackC3]
     )
     # # load trash bin
     # trash = protocol.load_trash_bin("Trash") # OT-2
@@ -84,7 +93,7 @@ def run(protocol: protocol_api.ProtocolContext):
 
     for index, row in enumerate(well_data[1::]):
     # get source location from CSV
-        source_slot = row[0][1]
+        source_slot = row[0]
         print(source_slot)
         source_well = row[1]
         source_location = protocol.deck[source_slot][source_well]
@@ -93,7 +102,7 @@ def run(protocol: protocol_api.ProtocolContext):
         transfer_volume = float(row[4])
 
     # get destination location from CSV
-        destination_slot = row[2][1]
+        destination_slot = row[2]
         print(destination_slot)
         print(row)
         destination_well = row[3]
