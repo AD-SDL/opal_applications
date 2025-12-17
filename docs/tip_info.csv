@@ -1,3 +1,3 @@
-Tip, Instrument, Volume
-P20, OT-Flex, 20ul
-P200, OT-Flex, 200ul
+Tip, Instrument, Max Volume, Min Volume
+P20, OT-Flex, 20ul, 0.5ul
+P200, OT-Flex, 200ul, 5ul
