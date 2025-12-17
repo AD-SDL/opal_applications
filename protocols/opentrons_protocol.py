@@ -41,26 +41,25 @@ def run(protocol: protocol_api.ProtocolContext):
      
     source_slots = [row[0] for row in well_data][1::] # skip first row (header) and start at index 1
     unique_source_slots = list(set(source_slots)) # unique set ['1'] -> ['1', '2']
-    print(unique_source_slots)
+    
     destination_slots = [row[2] for row in well_data][1::]
     unique_destination_slots = list(set(destination_slots))
-    print("test")
     # load tip rack in deck slot A2
     tiprackB2 = protocol.load_labware(
-        load_name="opentrons_96_tiprack_20ul", location="B2"
+        load_name="opentrons_flex_96_tiprack_20ul", location="B2"
     )
     tiprackB3 = protocol.load_labware(
-        load_name="opentrons_96_tiprack_20ul", location="B3"
+        load_name="opentrons_flex_96_tiprack_20ul", location="B3"
     )
 
     tiprackC1 = protocol.load_labware(
-        load_name="opentrons_96_tiprack_300ul", location="C1"
+        load_name="opentrons_flex_96_tiprack_200ul", location="C1"
     )
     tiprackC2 = protocol.load_labware(
-        load_name="opentrons_96_tiprack_300ul", location="C2"
+        load_name="opentrons_flex_96_tiprack_200ul", location="C2"
     )
     tiprackC3 = protocol.load_labware(
-        load_name="opentrons_96_tiprack_300ul", location="C3"
+        load_name="opentrons_flex_96_tiprack_200ul", location="C3"
     )
     
     # attach pipette to left mount
@@ -69,7 +68,7 @@ def run(protocol: protocol_api.ProtocolContext):
         mount="left",
         tip_racks=[tiprackB2, tiprackB3]
     )
-    pipette = protocol.load_instrument(
+    pipette2 = protocol.load_instrument(
         instrument_name="flex_1channel_1000",
         mount="right",
         tip_racks=[tiprackC1, tiprackC2, tiprackC3]
@@ -94,7 +93,7 @@ def run(protocol: protocol_api.ProtocolContext):
     for index, row in enumerate(well_data[1::]):
     # get source location from CSV
         source_slot = row[0]
-        print(source_slot)
+        
         source_well = row[1]
         source_location = protocol.deck[source_slot][source_well]
 
@@ -103,17 +102,23 @@ def run(protocol: protocol_api.ProtocolContext):
 
     # get destination location from CSV
         destination_slot = row[2]
-        print(destination_slot)
-        print(row)
         destination_well = row[3]
         destination_location = protocol.deck[destination_slot][destination_well]
 
     # perform parameterized transfer
     # trash=False will return tips to rack for practice
     # change to trash=True before starting actual experiment
-        pipette.transfer(
-        volume=transfer_volume,
-        source=source_location,
-        dest=destination_location,
-        trash=False
-    )
+        if transfer_volume <= 20:
+                pipette.transfer(
+                volume=transfer_volume,
+                source=source_location,
+                dest=destination_location,
+                trash=False
+            )
+        else:
+                pipette2.transfer(
+                volume=transfer_volume,
+                source=source_location,
+                dest=destination_location,
+                trash=False
+            )

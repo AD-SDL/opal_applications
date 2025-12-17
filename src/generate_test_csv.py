@@ -5,8 +5,8 @@ columns = ["Source_Plate", "Source_Well", "Dest_Plate", "Dest_Well", "Transfer_V
 output_data = pd.DataFrame(columns=columns)
 source_plates = ["A1", "A2", "A3"]
 destination_plate = "B1"
-num_reagents = 16
-num_samples = 12
+num_reagents = 17
+num_samples = 18
 for i in range(num_reagents):
     source_well = f"{chr(65 + (i % 8))}{(i // 8) + 1}"
     for j in range(num_samples):
