@@ -29,7 +29,7 @@ def add_parameters(parameters):
     
 # protocol run function
 def run(protocol: protocol_api.ProtocolContext):
-    import csv
+    #import csv
     # well_data = protocol.params.cherrypicking_wells.parse_as_csv()
     well_data = []
     well_data = protocol.params.cherrypicking_wells.parse_as_csv()
