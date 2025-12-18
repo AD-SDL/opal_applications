@@ -46,14 +46,14 @@ def run(protocol: protocol_api.ProtocolContext):
     unique_destination_slots = list(set(destination_slots))
     # load tip rack in deck slot A2
     tiprackB2 = protocol.load_labware(
-        load_name="opentrons_flex_96_tiprack_20ul", location="B2"
+        load_name="opentrons_flex_96_tiprack_50ul", location="B2"
     )
     tiprackB3 = protocol.load_labware(
-        load_name="opentrons_flex_96_tiprack_20ul", location="B3"
+        load_name="opentrons_flex_96_tiprack_50ul", location="B3"
     )
 
     tiprackC1 = protocol.load_labware(
-        load_name="opentrons_flex_96_tiprack_20ul", location="C1"
+        load_name="opentrons_flex_96_tiprack_50ul", location="C1"
     )
     tiprackC2 = protocol.load_labware(
         load_name="opentrons_flex_96_tiprack_200ul", location="C2"
