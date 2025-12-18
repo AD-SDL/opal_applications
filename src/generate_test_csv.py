@@ -7,7 +7,7 @@ source_plates = ["A1", "A2", "A3"]
 destination_plate = "B1"
 well_volume = 250
 num_reagents = 17
-num_samples = 18
+num_samples = 12
 max_volume = int(well_volume/num_reagents)
 for i in range(num_reagents):
     source_well = f"{chr(65 + (i % 8))}{(i // 8) + 1}"

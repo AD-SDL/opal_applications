@@ -53,7 +53,7 @@ def run(protocol: protocol_api.ProtocolContext):
     )
 
     tiprackC1 = protocol.load_labware(
-        load_name="opentrons_flex_96_tiprack_200ul", location="C1"
+        load_name="opentrons_flex_96_tiprack_20ul", location="C1"
     )
     tiprackC2 = protocol.load_labware(
         load_name="opentrons_flex_96_tiprack_200ul", location="C2"
@@ -66,12 +66,12 @@ def run(protocol: protocol_api.ProtocolContext):
     pipette = protocol.load_instrument(
         instrument_name="flex_1channel_50",
         mount="left",
-        tip_racks=[tiprackB2, tiprackB3]
+        tip_racks=[tiprackB2, tiprackB3, tiprackC1]
     )
     pipette2 = protocol.load_instrument(
         instrument_name="flex_1channel_1000",
         mount="right",
-        tip_racks=[tiprackC1, tiprackC2, tiprackC3]
+        tip_racks=[tiprackC2, tiprackC3]
     )
     # # load trash bin
     # trash = protocol.load_trash_bin("Trash") # OT-2
