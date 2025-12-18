@@ -5,7 +5,7 @@ columns = ["Source_Plate", "Source_Well", "Dest_Plate", "Dest_Well", "Transfer_V
 output_data = pd.DataFrame(columns=columns)
 source_plates = ["A1", "A2", "A3"]
 destination_plate = "B1"
-well_volume = 250
+well_volume = 2000
 num_reagents = 17
 num_samples = 12
 max_volume = int(well_volume/num_reagents)

@@ -17,8 +17,8 @@ requirements = {"robotType": "Flex", "apiLevel": "2.20"}
 def add_parameters(parameters):
 # the variable name must match the protocol.params.attribute (below)
     parameters.add_csv_file(
-        variable_name="cherrypicking_wells",
-        display_name="Cherrypicking wells",
+        variable_name="input_csv",
+        display_name="Input csv",
         description=(
             "Table:"
             " source_slot, source_well,"
@@ -32,12 +32,12 @@ def run(protocol: protocol_api.ProtocolContext):
     import csv
     # well_data = protocol.params.cherrypicking_wells.parse_as_csv()
     well_data = []
-    # well_data = protocol.params.cherrypicking_wells.parse_as_csv()
-    with open("../csv_outputs/OTFlex_test.csv", mode='r', newline='', encoding='utf-8') as csvfile:
-        # Use csv.reader to parse the file
-        csv_reader = csv.reader(csvfile)
-        for row in csv_reader:
-            well_data.append(row)
+    well_data = protocol.params.cherrypicking_wells.parse_as_csv()
+    # with open("../csv_outputs/OTFlex_test.csv", mode='r', newline='', encoding='utf-8') as csvfile:
+    #     # Use csv.reader to parse the file
+    #     csv_reader = csv.reader(csvfile)
+    #     for row in csv_reader:
+    #         well_data.append(row)
      
     source_slots = [row[0] for row in well_data][1::] # skip first row (header) and start at index 1
     unique_source_slots = list(set(source_slots)) # unique set ['1'] -> ['1', '2']
@@ -108,7 +108,7 @@ def run(protocol: protocol_api.ProtocolContext):
     # perform parameterized transfer
     # trash=False will return tips to rack for practice
     # change to trash=True before starting actual experiment
-        if transfer_volume <= 20:
+        if transfer_volume <= 50:
                 pipette.transfer(
                 volume=transfer_volume,
                 source=source_location,
